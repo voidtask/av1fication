@@ -9,9 +9,11 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 )
 
 var (
@@ -133,12 +135,37 @@ func inputFiles(inputDir string) []string {
 		panic(err)
 	}
 
-	absPaths := []string{}
+	type inpFileWithTime struct {
+		path    string
+		modTime time.Time
+	}
+
+	inpFiles := []inpFileWithTime{}
+
 	for _, m := range matches {
 		abs, err := filepath.Abs(m)
-		if err == nil {
-			absPaths = append(absPaths, abs)
+		if err != nil {
+			continue
 		}
+
+		stat, err := os.Stat(abs)
+		if err != nil {
+			continue
+		}
+
+		inpFiles = append(inpFiles, inpFileWithTime{
+			path:    abs,
+			modTime: stat.ModTime(),
+		})
+	}
+
+	sort.Slice(inpFiles, func(i, j int) bool {
+		return inpFiles[i].modTime.Before(inpFiles[j].modTime)
+	})
+
+	absPaths := make([]string, len(inpFiles))
+	for i, inpFile := range inpFiles {
+		absPaths[i] = inpFile.path
 	}
 
 	return absPaths
