@@ -128,7 +128,7 @@ func ffmpegProcess(input string, output string) {
 }
 
 func inputFiles(inputDir string) []string {
-	matches, err := filepath.Glob(filepath.Join(inputDir, "*.mp4"))
+	matches, err := filepath.Glob(filepath.Join(inputDir, inputPattern))
 	if err != nil {
 		panic(err)
 	}
