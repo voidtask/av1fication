@@ -15,23 +15,29 @@ import (
 )
 
 var (
-	crf       int
-	preset    int
-	maxHeight int
+	crf          int
+	preset       int
+	maxHeight    int
+	noMaxHeight  bool
+	svtAv1Params string
 )
 
 var (
-	inputDir string
-	doneDir  string
-	outDir   string
-	tempDir  string
+	inputPattern string
+	inputDir     string
+	doneDir      string
+	outDir       string
+	tempDir      string
 )
 
 func init() {
 	flag.IntVar(&crf, "crf", 32, "CRF value passed to SVT-AV1")
 	flag.IntVar(&preset, "preset", 4, "Preset value passed to SVT-AV1")
 	flag.IntVar(&maxHeight, "maxheight", 1440, "Maximum height of output video")
+	flag.BoolVar(&noMaxHeight, "nomaxheight", false, "Disalbes maximum height filter, -maxheight flag will be ignored if set to true")
+	flag.StringVar(&svtAv1Params, "svtav1-params", "keyint=10s:fast-decode=2", "SVT-AV1 params passed to ffmpeg command")
 
+	flag.StringVar(&inputPattern, "pattern", "*.mp4", "Input video files pattern")
 	flag.StringVar(&inputDir, "dir", "./", "Directory that will be used to scan for videos")
 	flag.StringVar(&doneDir, "processeddir", "./_processed", "Directory where processed files will be moved")
 	flag.StringVar(&outDir, "outdir", "./_out", "Directory where processed files go to")
@@ -72,7 +78,7 @@ func ffprobeResolution(path string) ([]int, error) {
 	return result, nil
 }
 
-func ffmpegProcess(input string, output string, preset int, crf int) {
+func ffmpegProcess(input string, output string) {
 	args := []string{
 		"-c",
 		"0-7",
@@ -82,16 +88,22 @@ func ffmpegProcess(input string, output string, preset int, crf int) {
 		"-map", "0:v",
 		"-map", "0:a",
 		"-map", "0:s?",
-		"-vf", "scale=-1:'min(1440,ih)'",
+	}
+
+	if !noMaxHeight {
+		args = append(args, "-vf", fmt.Sprintf("scale=-1:'min(%d,ih)'", maxHeight))
+	}
+
+	args = append(args,
 		"-c:v", "libsvtav1",
-		"-svtav1-params", "keyint=10s:fast-decode=2",
+		"-svtav1-params", svtAv1Params,
 		"-preset", strconv.Itoa(preset),
 		"-crf", strconv.Itoa(crf),
 		"-pix_fmt", "yuv420p10le",
 		"-c:a", "copy",
 		"-c:s", "copy",
 		output,
-	}
+	)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -101,7 +113,9 @@ func ffmpegProcess(input string, output string, preset int, crf int) {
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
 
+	fmt.Println("----------------")
 	fmt.Println(cmd.String())
+	fmt.Println()
 
 	err := cmd.Run()
 
@@ -138,21 +152,30 @@ func main() {
 		var displayHeight int
 
 		srcRes, err := ffprobeResolution(path)
-		if err != nil {
-			displayHeight = maxHeight
-		}
 
-		displayHeight = min(maxHeight, srcRes[1])
+		switch {
+		case err != nil && !noMaxHeight:
+			displayHeight = maxHeight
+		case err == nil && !noMaxHeight:
+			displayHeight = min(maxHeight, srcRes[1])
+		case err == nil && noMaxHeight:
+			displayHeight = srcRes[1]
+		default:
+			displayHeight = -1
+		}
 
 		srcBase := filepath.Base(path)
 		srcExt := filepath.Ext(path)
 
 		newBase := strings.TrimSuffix(srcBase, srcExt)
-		newBase += fmt.Sprintf(" (%dp) [AV1 10bit].mkv", displayHeight)
+		if !noMaxHeight {
+			newBase += fmt.Sprintf(" (%dp)", displayHeight)
+		}
+		newBase += " [AV1 10bit].mkv"
 
 		tempPath := filepath.Join(tempDir, newBase)
 
-		ffmpegProcess(path, tempPath, preset, crf)
+		ffmpegProcess(path, tempPath)
 	}
 
 	fmt.Println("\n[AV1] Done!")
